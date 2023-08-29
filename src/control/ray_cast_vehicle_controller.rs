@@ -142,7 +142,7 @@ pub struct Wheel {
     pub side_friction_stiffness: Real,
     /// The wheel’s current rotation on its axle.
     pub rotation: Real,
-    delta_rotation: Real,
+    pub delta_rotation: Real,
     roll_influence: Real, // TODO: make this public?
     /// The maximum force applied by the suspension.
     pub max_suspension_force: Real,
@@ -163,7 +163,7 @@ pub struct Wheel {
     suspension_relative_velocity: Real,
     /// The force applied by the suspension.
     pub wheel_suspension_force: Real,
-    skid_info: Real,
+    pub skid_info: Real,
 }
 
 impl Wheel {
