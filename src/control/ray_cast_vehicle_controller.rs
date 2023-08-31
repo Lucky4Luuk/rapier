@@ -655,8 +655,12 @@ impl DynamicRayCastVehicleController {
                 wheel.grip_side = 0.0;
 
                 if ground_object.is_some() {
-                    let max_imp = wheel.wheel_suspension_force * dt * wheel.friction_slip;
-                    let max_imp_side = (wheel.wheel_suspension_force * 0.5) * dt * (wheel.friction_slip_side * 2.0);
+                    wheel.grip_fwd = 1.0;
+                    wheel.grip_side = 1.0;
+
+                    // println!("{wheel_id}: {}", wheel.wheel_suspension_force);
+                    let max_imp = wheel.wheel_suspension_force.min(5000.0) * dt * wheel.friction_slip;
+                    let max_imp_side = (wheel.wheel_suspension_force.min(5000.0) * 0.5) * dt * (wheel.friction_slip_side * 2.0);
                     let max_imp_squared = max_imp * max_imp;
                     let max_imp_side_squared = max_imp_side * max_imp_side;
                     assert!(max_imp_squared >= 0.0);
@@ -668,24 +672,11 @@ impl DynamicRayCastVehicleController {
 
                     let impulse_squared = x * x + y * y;
 
-                    {
-                        let t = ((x * x) / max_imp_squared) * 0.5;
-                        println!("{wheel_id}: {t}");
-                        // wheel.grip_fwd = ((1.77 - t).powf(2.0).sin()).min(1.0).max(0.0);
-                        wheel.grip_fwd = 1.0;
-                    }
-
-                    {
-                        let t = ((y * y) / max_imp_side_squared) * 0.5;
-                        // wheel.grip_side = ((1.77 - t).powf(2.0).sin()).min(1.0).max(0.0);
-                        wheel.grip_side = 1.0;
-                    }
-
-                    if x * x > max_imp_squared {
+                    if impulse_squared > max_imp_squared {
                         sliding_fwd = true;
                     }
 
-                    if y * y > max_imp_side_squared {
+                    if impulse_squared > max_imp_side_squared {
                         sliding_side = true;
                     }
 
