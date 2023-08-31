@@ -44,6 +44,7 @@ pub struct WheelTuning {
     /// The larger the value, the more instantaneous braking will happen (with the risk of
     /// causing the vehicle to flip if it’s too strong).
     pub friction_slip: Real,
+    pub friction_slip_side: Real,
     /// The maximum force applied by the suspension.
     pub max_suspension_force: Real,
 }
@@ -57,6 +58,7 @@ impl Default for WheelTuning {
             max_suspension_travel: 5.0,
             side_friction_stiffness: 1.0,
             friction_slip: 10.5,
+            friction_slip_side: 10.5,
             max_suspension_force: 6000.0,
         }
     }
@@ -94,6 +96,7 @@ struct WheelDesc {
     /// The larger the value, the more instantaneous braking will happen (with the risk of
     /// causing the vehicle to flip if it’s too strong).
     pub friction_slip: Real,
+    pub friction_slip_side: Real,
     /// The maximum force applied by the suspension.
     pub max_suspension_force: Real,
     /// The multiplier of friction between a tire and the collider it's on top of.
@@ -138,6 +141,7 @@ pub struct Wheel {
     /// The larger the value, the more instantaneous braking will happen (with the risk of
     /// causing the vehicle to flip if it’s too strong).
     pub friction_slip: Real,
+    pub friction_slip_side: Real,
     /// The multiplier of friction between a tire and the collider it's on top of.
     pub side_friction_stiffness: Real,
     /// The wheel’s current rotation on its axle.
@@ -164,6 +168,9 @@ pub struct Wheel {
     /// The force applied by the suspension.
     pub wheel_suspension_force: Real,
     pub skid_info: Real,
+
+    pub grip_fwd: Real,
+    pub grip_side: Real,
 }
 
 impl Wheel {
@@ -183,6 +190,7 @@ impl Wheel {
             wheel_axle_ws: info.axle_cs,
             center: Point::origin(),
             friction_slip: info.friction_slip,
+            friction_slip_side: info.friction_slip_side,
             steering: 0.0,
             engine_force: 0.0,
             rotation: 0.0,
@@ -197,6 +205,9 @@ impl Wheel {
             side_impulse: 0.0,
             forward_impulse: 0.0,
             side_friction_stiffness: info.side_friction_stiffness,
+
+            grip_fwd: 0.0,
+            grip_side: 0.0,
         }
     }
 
@@ -279,6 +290,7 @@ impl DynamicRayCastVehicleController {
             damping_compression: tuning.suspension_compression,
             damping_relaxation: tuning.suspension_damping,
             friction_slip: tuning.friction_slip,
+            friction_slip_side: tuning.friction_slip_side,
             max_suspension_travel: tuning.max_suspension_travel,
             max_suspension_force: tuning.max_suspension_force,
             side_friction_stiffness: tuning.side_friction_stiffness,
@@ -599,10 +611,11 @@ impl DynamicRayCastVehicleController {
             }
         }
 
-        let side_factor = 1.0;
-        let fwd_factor = 0.5;
+        let side_factor = 0.7;
+        let fwd_factor = 0.7;
 
-        let mut sliding = false;
+        let mut sliding_fwd = false;
+        let mut sliding_side = false;
         {
             for wheel_id in 0..num_wheels {
                 let wheel = &mut self.wheels[wheel_id];
@@ -638,11 +651,14 @@ impl DynamicRayCastVehicleController {
 
                 wheel.forward_impulse = 0.0;
                 wheel.skid_info = 1.0;
+                wheel.grip_fwd = 0.0;
+                wheel.grip_side = 0.0;
 
                 if ground_object.is_some() {
                     let max_imp = wheel.wheel_suspension_force * dt * wheel.friction_slip;
-                    let max_imp_side = max_imp;
-                    let max_imp_squared = max_imp * max_imp_side;
+                    let max_imp_side = (wheel.wheel_suspension_force * 0.5) * dt * (wheel.friction_slip_side * 2.0);
+                    let max_imp_squared = max_imp * max_imp;
+                    let max_imp_side_squared = max_imp_side * max_imp_side;
                     assert!(max_imp_squared >= 0.0);
 
                     wheel.forward_impulse = rolling_friction;
@@ -652,9 +668,28 @@ impl DynamicRayCastVehicleController {
 
                     let impulse_squared = x * x + y * y;
 
-                    if impulse_squared > max_imp_squared {
-                        sliding = true;
+                    {
+                        let t = ((x * x) / max_imp_squared) * 0.5;
+                        println!("{wheel_id}: {t}");
+                        // wheel.grip_fwd = ((1.77 - t).powf(2.0).sin()).min(1.0).max(0.0);
+                        wheel.grip_fwd = 1.0;
+                    }
 
+                    {
+                        let t = ((y * y) / max_imp_side_squared) * 0.5;
+                        // wheel.grip_side = ((1.77 - t).powf(2.0).sin()).min(1.0).max(0.0);
+                        wheel.grip_side = 1.0;
+                    }
+
+                    if x * x > max_imp_squared {
+                        sliding_fwd = true;
+                    }
+
+                    if y * y > max_imp_side_squared {
+                        sliding_side = true;
+                    }
+
+                    if sliding_fwd || sliding_side {
                         let factor = max_imp * crate::utils::inv(impulse_squared.sqrt());
                         wheel.skid_info *= factor;
                     }
@@ -662,11 +697,20 @@ impl DynamicRayCastVehicleController {
             }
         }
 
-        if sliding {
+        if sliding_fwd {
+            for wheel in &mut self.wheels {
+                if wheel.forward_impulse != 0.0 {
+                    if wheel.skid_info < 1.0 {
+                        wheel.forward_impulse *= wheel.skid_info;
+                    }
+                }
+            }
+        }
+
+        if sliding_side {
             for wheel in &mut self.wheels {
                 if wheel.side_impulse != 0.0 {
                     if wheel.skid_info < 1.0 {
-                        wheel.forward_impulse *= wheel.skid_info;
                         wheel.side_impulse *= wheel.skid_info;
                     }
                 }
@@ -685,13 +729,13 @@ impl DynamicRayCastVehicleController {
 
                 if wheel.forward_impulse != 0.0 {
                     chassis.apply_impulse_at_point(
-                        self.forward_ws[wheel_id] * wheel.forward_impulse,
+                        self.forward_ws[wheel_id] * wheel.forward_impulse * wheel.grip_fwd,
                         impulse_point,
                         false,
                     );
                 }
                 if wheel.side_impulse != 0.0 {
-                    let side_impulse = self.axle[wheel_id] * wheel.side_impulse;
+                    let side_impulse = self.axle[wheel_id] * wheel.side_impulse * 1.2 * wheel.grip_side;
 
                     let v_chassis_world_up =
                         chassis.position().rotation * Vector::ith(self.index_up_axis, 1.0);
