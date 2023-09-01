@@ -201,7 +201,7 @@ impl Wheel {
             suspension_relative_velocity: 0.0,
             wheel_suspension_force: 0.0,
             max_suspension_force: info.max_suspension_force,
-            skid_info: 0.0,
+            skid_info: 1.0,
             side_impulse: 0.0,
             forward_impulse: 0.0,
             side_friction_stiffness: info.side_friction_stiffness,
@@ -611,8 +611,8 @@ impl DynamicRayCastVehicleController {
             }
         }
 
-        let side_factor = 0.7;
-        let fwd_factor = 0.7;
+        let side_factor = 1.0;
+        let fwd_factor = 1.4;
 
         let mut sliding_fwd = false;
         let mut sliding_side = false;
@@ -649,6 +649,8 @@ impl DynamicRayCastVehicleController {
 
                 //switch between active rolling (throttle), braking and non-active rolling friction (no throttle/break)
 
+                // let speed_factor = self.current_vehicle_speed.abs() / 15.0 + 1.0;
+                let speed_factor = 1.0;
                 wheel.forward_impulse = 0.0;
                 wheel.skid_info = 1.0;
                 wheel.grip_fwd = 0.0;
@@ -656,14 +658,20 @@ impl DynamicRayCastVehicleController {
 
                 if ground_object.is_some() {
                     wheel.grip_fwd = 1.0;
-                    wheel.grip_side = 1.0;
+                    wheel.grip_side = 0.9;
 
                     // println!("{wheel_id}: {}", wheel.wheel_suspension_force);
-                    let max_imp = wheel.wheel_suspension_force.min(5000.0) * dt * wheel.friction_slip;
-                    let max_imp_side = (wheel.wheel_suspension_force.min(5000.0) * 0.5) * dt * (wheel.friction_slip_side * 2.0);
+                    // TODO: Use that formula from yesterday to take the suspension force (aka tyre load) and get a grip value out
+                    let tyre_load = wheel.wheel_suspension_force.max(100.0).min(5000.0) / 5000.0 * 0.75;
+                    let mut grip = (1.77 - (tyre_load).min(1.77).max(0.01)).powf(2.0).sin() * 0.5 + 0.5;
+                    grip /= wheel.steering.abs() * 0.2 / speed_factor + 1.0;
+                    println!("{wheel_id}: {} = {}", (tyre_load * 10.0).floor() / 10.0, (grip * 100.0).floor() / 100.0);
+                    let max_imp = (grip * 5000.0) * dt * wheel.friction_slip;
+                    let max_imp_side = (grip * 5000.0) * dt * wheel.friction_slip_side;
                     let max_imp_squared = max_imp * max_imp;
                     let max_imp_side_squared = max_imp_side * max_imp_side;
                     assert!(max_imp_squared >= 0.0);
+                    assert!(max_imp_side_squared >= 0.0);
 
                     wheel.forward_impulse = rolling_friction;
 
